@@ -23,7 +23,7 @@ router.get('/dashboard', async (req, res, next) => {
     // Build time filter based on range or explicit start/end dates
     // timeFilter contains SQL fragment starting with ' AND '
     // Default to this week's data when no explicit range is provided
-    let timeFilter = ` AND s.created_at >= date_trunc('week', CURRENT_DATE)`;
+    let timeFilter = ` AND s.created_at >= CURDATE() - INTERVAL WEEKDAY(CURDATE()) DAY`;
     if (startDate) {
       timeFilter = ` AND s.created_at >= $${paramIndex++}`;
       params.push(startDate);
@@ -32,13 +32,13 @@ router.get('/dashboard', async (req, res, next) => {
         params.push(endDate);
       }
     } else if (range === 'week') {
-      timeFilter = ` AND s.created_at >= date_trunc('week', CURRENT_DATE)`;
+      timeFilter = ` AND s.created_at >= CURDATE() - INTERVAL WEEKDAY(CURDATE()) DAY`;
     } else if (range === 'today') {
       timeFilter = ` AND DATE(s.created_at) = CURRENT_DATE`;
     } else if (range === 'month') {
-      timeFilter = ` AND s.created_at >= date_trunc('month', CURRENT_DATE)`;
+      timeFilter = ` AND s.created_at >= DATE_FORMAT(CURDATE(), '%Y-%m-01')`;
     } else if (range === 'year') {
-      timeFilter = ` AND s.created_at >= date_trunc('year', CURRENT_DATE)`;
+      timeFilter = ` AND s.created_at >= DATE_FORMAT(CURDATE(), '%Y-01-01')`;
     }
 
     // Today's/selected range stats (include discounts)
@@ -214,7 +214,7 @@ router.get('/realtime', async (req, res, next) => {
     const result = await pool.query(
       `SELECT COUNT(*) as transactions, COALESCE(SUM(total_amount),0) as revenue
        FROM sales
-       WHERE created_at >= NOW() - INTERVAL '1 minute' AND status = 'completed'`);
+       WHERE created_at >= NOW() - INTERVAL 1 MINUTE AND status = 'completed'`);
     res.json({ transactions: parseInt(result.rows[0].transactions) || 0, revenue: parseFloat(result.rows[0].revenue) || 0 });
   } catch (error) {
     next(error);
@@ -270,11 +270,11 @@ router.get('/sales', authorize('reports'), async (req, res, next) => {
     let selectDate = 'DATE(s.created_at) as date';
 
     if (groupBy === 'month') {
-      groupByClause = "TO_CHAR(s.created_at, 'YYYY-MM')";
-      selectDate = "TO_CHAR(s.created_at, 'YYYY-MM') as date";
+      groupByClause = "DATE_FORMAT(s.created_at, '%Y-%m')";
+      selectDate = "DATE_FORMAT(s.created_at, '%Y-%m') as date";
     } else if (groupBy === 'week') {
-      groupByClause = "DATE_TRUNC('week', s.created_at)";
-      selectDate = "DATE_TRUNC('week', s.created_at) as date";
+      groupByClause = "DATE_FORMAT(DATE_SUB(s.created_at, INTERVAL WEEKDAY(s.created_at) DAY), '%Y-%m-%d')";
+      selectDate = "DATE_FORMAT(DATE_SUB(s.created_at, INTERVAL WEEKDAY(s.created_at) DAY), '%Y-%m-%d') as date";
     }
 
     const result = await pool.query(

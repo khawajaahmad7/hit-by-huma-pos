@@ -1,18 +1,14 @@
 {
   "name": "hit-by-huma-pos-server",
   "version": "1.0.0",
-  "description": "Backend API for HIT BY HUMA POS System",
-  "main": "src/index.js",
+  "description": "Backend API for HIT BY HUMA POS System (Vercel serverless)",
+  "main": "src/app.js",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "nodemon src/index.js",
-    "migrate": "node src/database/migrate.js",
-    "seed": "node src/database/seed.js",
-    "test": "jest"
+    "dev": "nodemon src/index.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
-    "bwip-js": "^4.1.1",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
@@ -20,23 +16,11 @@
     "express-validator": "^7.0.1",
     "helmet": "^7.1.0",
     "jsonwebtoken": "^9.0.2",
-    "multer": "^1.4.5-lts.1",
-    "node-cache": "^5.1.2",
-    "node-thermal-printer": "^4.5.0",
-    "pg": "^8.11.3",
-    "socket.io": "^4.7.2",
+    "mysql2": "^3.11.0",
     "uuid": "^9.0.1",
     "winston": "^3.11.0"
   },
-  "optionalDependencies": {
-    "bull": "^4.12.0",
-    "escpos": "^3.0.0-alpha.6",
-    "escpos-usb": "^3.0.0-alpha.4",
-    "ioredis": "^5.3.2",
-    "twilio": "^4.19.3"
-  },
   "devDependencies": {
-    "jest": "^29.7.0",
     "nodemon": "^3.0.2"
   }
 }

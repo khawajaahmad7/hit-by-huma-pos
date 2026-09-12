@@ -1,140 +1,219 @@
-const { Pool } = require('pg');
-const logger = require('../utils/logger');
+const mysql = require('mysql2/promise');
 
-// PostgreSQL configuration
-// Railway provides DATABASE_URL automatically
-// For Railway internal networking, no SSL needed
-// For public connections (proxy), SSL is required
-const isInternalNetwork = process.env.DATABASE_URL?.includes('.railway.internal');
-const isLocalhost = process.env.DATABASE_URL?.includes('localhost') || !process.env.DATABASE_URL;
-const useSSL = !isInternalNetwork && !isLocalhost;
+// MySQL configuration for cPanel shared hosting + Vercel serverless.
+// Set DB_HOST, DB_USER, DB_PASSWORD, DB_NAME, (optional) DB_PORT, DB_SSL.
+// cPanel "Remote MySQL" must allow connections from '%' for Vercel.
+const useSSL = process.env.DB_SSL !== 'false' &&
+  !['localhost', '127.0.0.1'].includes(process.env.DB_HOST || 'localhost');
 
-logger.info('Database config:', { isInternalNetwork, isLocalhost, useSSL, hasUrl: !!process.env.DATABASE_URL });
-
-const config = process.env.DATABASE_URL 
-  ? {
-      connectionString: process.env.DATABASE_URL,
-      ssl: useSSL ? { rejectUnauthorized: false } : false,
-    }
-  : {
-      host: process.env.DB_HOST || 'localhost',
-      port: parseInt(process.env.DB_PORT) || 5432,
-      database: process.env.DB_NAME || 'hitbyhuma_pos',
-      user: process.env.DB_USER || 'postgres',
-      password: process.env.DB_PASSWORD || '',
-    };
+const config = {
+  host: process.env.DB_HOST || 'localhost',
+  port: parseInt(process.env.DB_PORT || '3306', 10),
+  database: process.env.DB_NAME || 'hitbyhuma_pos',
+  user: process.env.DB_USER || 'root',
+  password: process.env.DB_PASSWORD || '',
+  // Keep small: shared hosting max_user_connections is low and each
+  // serverless instance holds its own pool.
+  connectionLimit: parseInt(process.env.DB_POOL_MAX || '5', 10),
+  waitForConnections: true,
+  queueLimit: 0,
+  connectTimeout: 15000,
+  enableKeepAlives: true,
+  charset: 'utf8mb4',
+  dateStrings: true,
+  ...(useSSL ? { ssl: { rejectUnauthorized: false } } : {}),
+};
 
 let pool = null;
 
-const connect = async () => {
-  try {
-    logger.info('Connecting to database...', { 
-      ssl: config.ssl ? 'enabled' : 'disabled',
-      isInternalNetwork 
-    });
-    
-    pool = new Pool({
-      ...config,
-      max: 20,
-      idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 60000,
-    });
-    
-    // Test connection
-    const client = await pool.connect();
-    await client.query('SELECT 1');
-    client.release();
-    
-    logger.info('Connected to PostgreSQL database');
-    return pool;
-  } catch (error) {
-    logger.error('Database connection failed:', error);
-    throw error;
-  }
-};
-
-const close = async () => {
-  try {
-    if (pool) {
-      await pool.end();
-      logger.info('Database connection closed');
-    }
-  } catch (error) {
-    logger.error('Error closing database connection:', error);
-    throw error;
-  }
-};
-
-const getPool = () => {
-  if (!pool) {
-    throw new Error('Database not connected. Call connect() first.');
-  }
+const getRawPool = () => {
+  if (!pool) pool = mysql.createPool(config);
   return pool;
 };
 
-// Transaction helper
-const transaction = async (callback) => {
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    const result = await callback(client);
-    await client.query('COMMIT');
-    return result;
-  } catch (error) {
-    await client.query('ROLLBACK');
-    throw error;
-  } finally {
-    client.release();
+// Public pool: pg-compatible .query(q, values) -> { rows, recordset, rowCount, insertId }
+const getPool = () => ({
+  query: (q, p = []) => execute(q, Array.isArray(p) ? p : [p]),
+});
+
+const connect = async () => {
+  await getRawPool().query('SELECT 1');
+  return getPool();
+};
+
+const close = async () => {
+  if (pool) {
+    await pool.end();
+    pool = null;
   }
 };
 
-// Query helper - converts @param syntax to $1, $2, etc for PostgreSQL
-const query = async (queryString, params = {}) => {
-  // Convert named parameters (@param) to positional ($1, $2, etc)
-  const paramNames = Object.keys(params);
-  const paramValues = Object.values(params);
-  
-  let convertedQuery = queryString;
-  paramNames.forEach((name, index) => {
-    // Replace @paramName with $n (PostgreSQL style)
-    const regex = new RegExp(`@${name}\\b`, 'g');
-    convertedQuery = convertedQuery.replace(regex, `$${index + 1}`);
+// Primary key map — needed to emulate INSERT ... RETURNING
+const PK = {
+  users: 'user_id',
+  roles: 'role_id',
+  shifts: 'shift_id',
+  parked_sales: 'parked_id',
+  products: 'product_id',
+  product_variants: 'variant_id',
+  categories: 'category_id',
+  customers: 'customer_id',
+  locations: 'location_id',
+  inventory: 'inventory_id',
+  sales: 'sale_id',
+  sale_items: 'sale_item_id',
+  sale_payments: 'sale_payment_id',
+  payment_methods: 'payment_method_id',
+  attributes: 'attribute_id',
+  attribute_values: 'attribute_value_id',
+  settings: 'setting_id',
+  inventory_transactions: 'transaction_id',
+};
+
+// SQL dialect rewrites (T-SQL / Postgres -> MySQL)
+const dialect = (sql) => sql
+  .replace(/\bILIKE\b/g, 'LIKE')
+  .replace(/\bISNULL\s*\(/g, 'IFNULL(')
+  .replace(/\bN'/g, "'");
+
+// Convert @name (object params) or $1..$n (array params) to MySQL '?'
+const convert = (sql, params) => {
+  if (Array.isArray(params)) {
+    const values = [];
+    const out = sql.replace(/\$(\d+)/g, (_, n) => {
+      values.push(params[Number(n) - 1]);
+      return '?';
+    });
+    return { sql: dialect(out), values };
+  }
+
+  const obj = params || {};
+  const values = [];
+  const out = sql.replace(/@([A-Za-z_][A-Za-z0-9_]*)(?![A-Za-z0-9_])/g, (m, name) => {
+    if (!Object.prototype.hasOwnProperty.call(obj, name)) return m;
+    values.push(obj[name]);
+    return '?';
   });
-  
-  const result = await pool.query(convertedQuery, paramValues);
+  return { sql: dialect(out), values };
+};
+
+// Shape raw mysql2 result into the union of mssql/pg result shapes
+const shape = (result) => {
+  if (Array.isArray(result)) {
+    return { rows: result, recordset: result, rowCount: result.length, rowsAffected: [-1] };
+  }
   return {
-    recordset: result.rows,
-    recordsets: [result.rows],
-    rowsAffected: [result.rowCount],
+    rows: [],
+    recordset: [],
+    rowCount: result.affectedRows,
+    rowsAffected: [result.affectedRows],
+    insertId: result.insertId,
   };
 };
 
-// Compatibility layer for mssql-style pool.request()
+// Core executor with RETURNING / OUTPUT INSERTED emulation
+const execute = async (queryString, params = []) => {
+  let { sql: q, values } = convert(queryString, params);
+
+  // mssql: strip OUTPUT INSERTED.* (treated as RETURNING *)
+  let hadOutput = false;
+  q = q.replace(/,\s*OUTPUT\s+INSERTED\.\*/i, () => { hadOutput = true; return ''; });
+  q = q.replace(/\bOUTPUT\s+INSERTED\.\*/i, () => { hadOutput = true; return ''; });
+
+  // Postgres: RETURNING <cols> at end of statement
+  let returning = null;
+  const m = q.match(/\bRETURNING\s+(.+?)(?:\s*)$/i);
+  if (m) {
+    returning = m[1].trim();
+    q = q.slice(0, m.index).trim();
+  } else if (hadOutput) {
+    returning = '*';
+  }
+
+  const [result] = await getRawPool().query(q, values);
+
+  if (Array.isArray(result)) return shape(result);
+
+  const shaped = shape(result);
+
+  if (returning) {
+    const verb = q.trimStart().slice(0, 6).toUpperCase();
+    try {
+      if (verb.startsWith('INSERT') && result.insertId) {
+        const t = q.match(/INSERT\s+(?:IGNORE\s+)?INTO\s+`?(\w+)`?/i);
+        const pk = t && PK[t[1]];
+        if (pk) {
+          const [rows] = await getRawPool().query(
+            `SELECT ${returning} FROM \`${t[1]}\` WHERE \`${pk}\` = ?`,
+            [result.insertId]
+          );
+          shaped.rows = shaped.recordset = rows;
+        }
+      } else if (verb.startsWith('UPDATE') && result.affectedRows > 0) {
+        const t = q.match(/UPDATE\s+`?(\w+)`?/i);
+        const wIdx = q.search(/\sWHERE\s/i);
+        if (t && wIdx !== -1) {
+          const before = q.slice(0, wIdx);
+          const numBefore = (before.match(/\?/g) || []).length;
+          const whereSql = q.slice(wIdx);
+          const whereParams = values.slice(numBefore);
+          const [rows] = await getRawPool().query(
+            `SELECT ${returning} FROM \`${t[1]}\` ${whereSql}`,
+            whereParams
+          );
+          shaped.rows = shaped.recordset = rows;
+        }
+      }
+    } catch (e) {
+      // RETURNING emulation failed — return basic result rather than failing the request
+      console.error('RETURNING emulation failed:', e.message);
+    }
+  }
+
+  return shaped;
+};
+
+// Transaction helper (routes currently unused, kept for sale atomicity work)
+const transaction = async (callback) => {
+  const conn = await getRawPool().getConnection();
+  const connQuery = (queryString, params = []) => {
+    const { sql: q, values } = convert(queryString, params);
+    return conn.query(q, values).then(([result]) => shape(result));
+  };
+  try {
+    await conn.beginTransaction();
+    const result = await callback({ query: connQuery });
+    await conn.commit();
+    return result;
+  } catch (error) {
+    await conn.rollback();
+    throw error;
+  } finally {
+    conn.release();
+  }
+};
+
+// mssql-style request() compatibility (pool.request().input().query())
 const request = () => {
   const inputs = {};
-  
   const req = {
-    input: function(name, typeOrValue, value) {
-      // For PostgreSQL, we just store the value (type is handled automatically)
+    input: (name, typeOrValue, value) => {
       inputs[name] = value !== undefined ? value : typeOrValue;
       return req;
     },
-    query: async function(queryString) {
-      return query(queryString, inputs);
-    },
+    query: (queryString) => execute(queryString, inputs),
   };
-  
   return req;
 };
 
 module.exports = {
-  pool: { 
+  pool: {
     request,
-    query: (q, p) => query(q, p),
+    query: (q, p) => execute(q, p),
   },
   connect,
   close,
   getPool,
   transaction,
-  query,
+  query: (q, p) => execute(q, p),
 };

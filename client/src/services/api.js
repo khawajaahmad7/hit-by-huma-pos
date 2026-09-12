@@ -1,13 +1,11 @@
 import axios from 'axios';
 import { useAuthStore } from '../stores/authStore';
 
-// Backend API URL - Railway deployment
-const BACKEND_URL = 'https://pos-backend-production-93a5.up.railway.app';
-const API_BASE_URL = import.meta.env.VITE_API_URL 
+// Same-origin API (Vercel: SPA + /api serverless functions served from one domain).
+// VITE_API_URL only needed if the API lives on a different host.
+const API_BASE_URL = import.meta.env.VITE_API_URL
   ? `${import.meta.env.VITE_API_URL}/api/v1`
-  : import.meta.env.DEV 
-    ? '/api/v1' 
-    : `${BACKEND_URL}/api/v1`;
+  : '/api/v1';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -36,11 +34,11 @@ api.interceptors.response.use(
   (response) => response,
   async (error) => {
     const originalRequest = error.config;
-    
+
     // Handle 401 errors (token expired)
     if (error.response?.status === 401 && !originalRequest._retry) {
       originalRequest._retry = true;
-      
+
       try {
         const newToken = await useAuthStore.getState().refreshAccessToken();
         originalRequest.headers.Authorization = `Bearer ${newToken}`;
@@ -52,7 +50,7 @@ api.interceptors.response.use(
         return Promise.reject(refreshError);
       }
     }
-    
+
     return Promise.reject(error);
   }
 );
@@ -65,7 +63,7 @@ export const authService = {
   refresh: (refreshToken) => api.post('/auth/refresh', { refreshToken }),
   me: () => api.get('/auth/me'),
   verifyPin: (pin) => api.post('/auth/verify-pin', { pin }),
-  changePassword: (currentPassword, newPassword) => 
+  changePassword: (currentPassword, newPassword) =>
     api.post('/auth/change-password', { currentPassword, newPassword }),
 };
 
@@ -81,7 +79,7 @@ export const productService = {
 
 export const inventoryService = {
   getAll: (params) => api.get('/inventory', { params }),
-  checkOtherLocations: (variantId, currentLocationId) => 
+  checkOtherLocations: (variantId, currentLocationId) =>
     api.get(`/inventory/check-other-locations/${variantId}`, { params: { currentLocationId } }),
   adjust: (data) => api.post('/inventory/adjust', data),
   receive: (data) => api.post('/inventory/receive', data),
@@ -141,14 +139,4 @@ export const settingsService = {
   getUsers: () => api.get('/settings/users/all'),
   createUser: (data) => api.post('/settings/users', data),
   getRoles: () => api.get('/settings/roles/all'),
-};
-
-export const hardwareService = {
-  testPrinter: () => api.get('/hardware/printer/test'),
-  printReceipt: (saleId) => api.post('/hardware/printer/receipt', { saleId }),
-  openCashDrawer: () => api.post('/hardware/cash-drawer/open'),
-  printLabel: (variantId, quantity) => api.post('/hardware/label/print', { variantId, quantity }),
-  printLabelBatch: (items) => api.post('/hardware/label/batch', { items }),
-  getLabelPreview: (variantId) => api.post('/hardware/label/preview', { variantId }),
-  updateCFD: (terminalId, state, cart) => api.post(`/hardware/cfd/update/${terminalId}`, { state, cart }),
 };

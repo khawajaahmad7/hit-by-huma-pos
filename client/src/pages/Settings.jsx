@@ -9,16 +9,16 @@ import {
   ShieldCheckIcon,
   CurrencyDollarIcon,
   DeviceTabletIcon,
+  QrCodeIcon,
   XMarkIcon,
   CheckIcon,
-  ExclamationTriangleIcon,
-  WifiIcon,
   TagIcon,
   PencilIcon,
   TrashIcon,
   PlusIcon
 } from '@heroicons/react/24/outline';
 import api from '../services/api';
+import { printReceipt, printLabel } from '../services/print';
 import toast from 'react-hot-toast';
 
 export default function Settings() {
@@ -402,201 +402,91 @@ function StoreSettings() {
   );
 }
 
-// Hardware Settings Component
+// Hardware Settings Component — printing happens in the browser via the
+// OS print dialog (installed printer drivers), so no server hardware routes exist.
 function HardwareSettings() {
-  const [testing, setTesting] = useState(null);
-  const [printerPort, setPrinterPort] = useState('');
-  const [savingPort, setSavingPort] = useState(false);
-
-  const { data: devices } = useQuery({
-    queryKey: ['hardware-status'],
-    queryFn: () => api.get('/hardware/status').then(res => res.data),
-    refetchInterval: 5000
-  });
-
-  // Load saved printer interface from settings
-  useEffect(() => {
-    let mounted = true;
-    api.get('/settings/thermal_printer_interface')
-      .then(res => {
-        if (!mounted) return;
-        const val = res.data?.setting_value || res.data?.setting_value || '';
-        setPrinterPort(val || '');
-      })
-      .catch(() => {
-        // ignore
+  const testReceipt = () => {
+    try {
+      printReceipt({
+        saleNumber: 'TEST-0001',
+        createdAt: new Date().toISOString(),
+        cashierName: 'Test',
+        items: [
+          { name: 'Test Product', quantity: 1, unitPrice: 1000, lineTotal: 1000 },
+          { name: 'Another Product', quantity: 2, unitPrice: 500, lineTotal: 1000 },
+        ],
+        subtotal: 2000,
+        discountAmount: 0,
+        taxAmount: 0,
+        totalAmount: 2000,
+        payments: [{ methodName: 'Cash', amount: 2000 }],
       });
-    return () => { mounted = false; };
-  }, []);
-
-  const testDevice = async (device) => {
-    setTesting(device);
-    try {
-      await api.post(`/hardware/test/${device}`);
-      toast.success(`${device} test successful`);
+      toast.success('Test receipt sent to print dialog');
     } catch (error) {
-      toast.error(`${device} test failed: ${error.response?.data?.message || 'Unknown error'}`);
-    } finally {
-      setTesting(null);
+      toast.error(error.message);
     }
   };
 
-  const openDrawer = async () => {
+  const testLabel = () => {
     try {
-      await api.post('/hardware/cash-drawer/open');
-      toast.success('Cash drawer opened');
+      printLabel({ name: 'Test Product', sku: 'TEST-SKU-001', barcode: 'TEST0001', price: 1500 }, 1);
+      toast.success('Test label sent to print dialog');
     } catch (error) {
-      toast.error('Failed to open cash drawer');
+      toast.error(error.message);
     }
   };
-
-  const hardwareList = [
-    {
-      id: 'printer',
-      name: 'Receipt Printer',
-      description: 'Epson TM-T88V',
-      icon: PrinterIcon,
-      status: devices?.printer?.connected,
-      port: devices?.printer?.port || 'Not configured'
-    },
-    {
-      id: 'scanner',
-      name: 'Barcode Scanner',
-      description: 'Zebra DS2208',
-      icon: DeviceTabletIcon,
-      status: devices?.scanner?.connected,
-      port: devices?.scanner?.port || 'USB HID'
-    },
-    {
-      id: 'display',
-      name: 'Customer Display',
-      description: 'Pole Display VFD',
-      icon: DeviceTabletIcon,
-      status: devices?.display?.connected,
-      port: devices?.display?.port || 'Not configured'
-    }
-  ];
 
   return (
     <div className="space-y-6">
       <div className="bg-white rounded-xl p-6 border">
-        <h2 className="text-lg font-semibold mb-6">Connected Devices</h2>
-        
+        <h2 className="text-lg font-semibold mb-2">Printing & Devices</h2>
+        <p className="text-sm text-gray-500 mb-6">
+          Receipts and labels are printed from your browser through the Windows print dialog.
+          Select your Epson thermal printer for receipts (80mm) and the Medialink label printer for labels (50x30mm).
+          Make sure popups are allowed for this site.
+        </p>
         <div className="space-y-4">
-          {hardwareList.map((device) => (
-            <div
-              key={device.id}
-              className="flex items-center justify-between p-4 bg-gray-50 rounded-lg"
-            >
-              <div className="flex items-center gap-4">
-                <div className={`w-12 h-12 rounded-lg flex items-center justify-center ${
-                  device.status ? 'bg-green-100' : 'bg-gray-200'
-                }`}>
-                  <device.icon className={`w-6 h-6 ${
-                    device.status ? 'text-green-600' : 'text-gray-400'
-                  }`} />
-                </div>
-                <div>
-                  <p className="font-medium text-gray-900">{device.name}</p>
-                  <p className="text-sm text-gray-500">{device.description}</p>
-                  <p className="text-xs text-gray-400">{device.port}</p>
-                </div>
+          <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 rounded-lg bg-gray-100 flex items-center justify-center">
+                <PrinterIcon className="w-6 h-6 text-gray-500" />
               </div>
-              <div className="flex items-center gap-3">
-                <span className={`flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${
-                  device.status
-                    ? 'bg-green-100 text-green-700'
-                    : 'bg-gray-100 text-gray-600'
-                }`}>
-                  {device.status ? (
-                    <>
-                      <WifiIcon className="w-3 h-3" />
-                      Connected
-                    </>
-                  ) : (
-                    <>
-                      <ExclamationTriangleIcon className="w-3 h-3" />
-                      Offline
-                    </>
-                  )}
-                </span>
-                <button
-                  onClick={() => testDevice(device.id)}
-                  disabled={testing === device.id}
-                  className="btn btn-sm btn-secondary"
-                >
-                  {testing === device.id ? 'Testing...' : 'Test'}
-                </button>
+              <div>
+                <p className="font-medium text-gray-900">Thermal Receipt Printer</p>
+                <p className="text-sm text-gray-500">Epson — 80mm paper, chosen in the print dialog</p>
               </div>
             </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Cash Drawer */}
-      <div className="bg-white rounded-xl p-6 border">
-        <h2 className="text-lg font-semibold mb-4">Cash Drawer</h2>
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-gray-600">Open the cash drawer manually</p>
-            <p className="text-sm text-gray-500">Usually connected via printer</p>
+            <button onClick={testReceipt} className="btn btn-sm btn-secondary">
+              Print Test Receipt
+            </button>
           </div>
-          <button onClick={openDrawer} className="btn-primary">
-            Open Drawer
-          </button>
-        </div>
-      </div>
-
-      {/* Printer Settings */}
-      <div className="bg-white rounded-xl p-6 border">
-        <h2 className="text-lg font-semibold mb-4">Printer Settings</h2>
-        <div className="space-y-4 max-w-md">
-          <div>
-            <label className="label">Printer Port/IP</label>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={printerPort}
-                onChange={(e) => setPrinterPort(e.target.value)}
-                placeholder="192.168.1.100 or printer:MediaLink_9250s or COM3"
-                className="input"
-              />
-              <button
-                className="btn btn-primary"
-                onClick={async () => {
-                  try {
-                    setSavingPort(true);
-                    // Save to settings table
-                    await api.put('/settings/thermal_printer_interface', { value: printerPort });
-                    // Apply at runtime
-                    await api.post('/hardware/printer/interface', { interface: printerPort });
-                    toast.success('Printer interface saved');
-                  } catch (err) {
-                    toast.error('Failed to save printer interface');
-                  } finally {
-                    setSavingPort(false);
-                  }
-                }}
-                disabled={savingPort}
-              >
-                {savingPort ? 'Saving...' : 'Save'}
-              </button>
+          <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 rounded-lg bg-gray-100 flex items-center justify-center">
+                <QrCodeIcon className="w-6 h-6 text-gray-500" />
+              </div>
+              <div>
+                <p className="font-medium text-gray-900">Label Printer</p>
+                <p className="text-sm text-gray-500">Medialink — 50x30mm labels, chosen in the print dialog</p>
+              </div>
             </div>
-            <p className="text-sm text-gray-500 mt-2">Enter the OS printer name or IP/interface string used by the server.</p>
+            <button onClick={testLabel} className="btn btn-sm btn-secondary">
+              Print Test Label
+            </button>
           </div>
-          <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-            <div>
-              <p className="font-medium">Auto-print receipts</p>
-              <p className="text-sm text-gray-500">Print receipt after each sale</p>
+          <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 rounded-lg bg-gray-100 flex items-center justify-center">
+                <DeviceTabletIcon className="w-6 h-6 text-gray-500" />
+              </div>
+              <div>
+                <p className="font-medium text-gray-900">Barcode Scanner</p>
+                <p className="text-sm text-gray-500">USB HID — works automatically on the POS screen</p>
+              </div>
             </div>
-            <Toggle defaultChecked />
-          </div>
-          <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-            <div>
-              <p className="font-medium">Print logo on receipts</p>
-              <p className="text-sm text-gray-500">Include store logo at top</p>
-            </div>
-            <Toggle />
+            <span className="px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700">
+              Ready
+            </span>
           </div>
         </div>
       </div>

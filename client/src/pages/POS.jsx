@@ -17,6 +17,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { useCartStore } from '../stores/cartStore';
 import api from '../services/api';
+import { printReceipt } from '../services/print';
 import toast from 'react-hot-toast';
 
 export default function POS() {
@@ -123,11 +124,32 @@ export default function POS() {
       clearCart();
       setShowPayment(false);
       refetchProducts(); // <-- Refetch products to update stock
-      // Trigger receipt print - server returns saleId
+      // Fetch the completed sale and print the receipt via the browser print dialog
       const saleId = response.data.saleId || response.data.transaction_id;
       if (saleId) {
-        api.post('/hardware/print-receipt', {
-          saleId: saleId
+        api.get(`/sales/${saleId}`).then(({ data }) => {
+          printReceipt({
+            saleNumber: data.sale?.sale_number,
+            createdAt: data.sale?.created_at,
+            cashierName: [data.sale?.cashier_first_name, data.sale?.cashier_last_name].filter(Boolean).join(' '),
+            locationName: data.sale?.location_name,
+            locationAddress: data.sale?.location_address,
+            locationPhone: data.sale?.location_phone,
+            customerName: [data.sale?.customer_first_name, data.sale?.customer_last_name].filter(Boolean).join(' '),
+            items: (data.items || []).map(i => ({
+              name: i.variant_name && i.variant_name !== 'Default'
+                ? `${i.product_name} (${i.variant_name})`
+                : i.product_name,
+              quantity: i.quantity,
+              unitPrice: i.unit_price,
+              lineTotal: i.line_total,
+            })),
+            subtotal: data.sale?.subtotal,
+            discountAmount: data.sale?.discount_amount,
+            taxAmount: data.sale?.tax_amount,
+            totalAmount: data.sale?.total_amount,
+            payments: data.payments || [],
+          });
         }).catch(() => { }); // Ignore print errors
       }
     },

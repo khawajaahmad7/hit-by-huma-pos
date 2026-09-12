@@ -64,7 +64,7 @@ router.post('/login', [
     if (isSalesman) {
       // Check if user already has an open shift
       const openShiftResult = await db.query(
-        `SELECT * FROM shifts WHERE user_id = @userId AND status = 'open'`,
+        `SELECT * FROM shifts WHERE user_id = @userId AND status = 'active'`,
         { userId: user.user_id }
       );
 
@@ -80,7 +80,7 @@ router.post('/login', [
           const shiftResult = await db.query(
             `INSERT INTO shifts (user_id, location_id, opening_cash, status, start_time)
              OUTPUT INSERTED.*
-             VALUES (@userId, @locationId, @openingCash, 'open', CURRENT_TIMESTAMP)`,
+             VALUES (@userId, @locationId, @openingCash, 'active', CURRENT_TIMESTAMP)`,
             {
               userId: user.user_id,
               locationId: userLocationId,
@@ -148,7 +148,7 @@ router.post('/logout', authenticate, async (req, res, next) => {
                         INNER JOIN payment_methods pm ON sp.payment_method_id = pm.payment_method_id
                         WHERE sa.shift_id = s.shift_id AND pm.method_type = 'CASH'), 0) as cash_sales
          FROM shifts s 
-         WHERE s.user_id = @userId AND s.status = 'open'`,
+         WHERE s.user_id = @userId AND s.status = 'active'`,
         { userId: user.user_id }
       );
 
@@ -240,7 +240,7 @@ router.get('/me', authenticate, async (req, res) => {
   let currentShift = null;
   if (isSalesman) {
     const shiftResult = await db.query(
-      `SELECT * FROM shifts WHERE user_id = @userId AND status = 'open'`,
+      `SELECT * FROM shifts WHERE user_id = @userId AND status = 'active'`,
       { userId: req.user.user_id }
     );
     if (shiftResult.recordset.length > 0) {

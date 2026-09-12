@@ -373,8 +373,7 @@ router.post('/', authorize('products'), [
       await db.query(
         `INSERT INTO inventory (variant_id, location_id, quantity_on_hand, updated_at)
          VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
-         ON CONFLICT (variant_id, location_id) 
-         DO UPDATE SET quantity_on_hand = inventory.quantity_on_hand + $3, updated_at = CURRENT_TIMESTAMP`,
+         ON DUPLICATE KEY UPDATE quantity_on_hand = quantity_on_hand + $3, updated_at = CURRENT_TIMESTAMP`,
         [variant.variant_id, req.user.default_location_id || 1, parseInt(finalInitialStock)]
       );
     }
