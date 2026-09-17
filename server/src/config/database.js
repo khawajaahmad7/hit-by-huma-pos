@@ -1,28 +1,43 @@
 const mysql = require('mysql2/promise');
 
 // MySQL configuration for cPanel shared hosting + Vercel serverless.
-// Set DB_HOST, DB_USER, DB_PASSWORD, DB_NAME, (optional) DB_PORT, DB_SSL.
+// Preferred: set DATABASE_URL (mysql://user:pass@host:port/dbname), same value
+// as the storefront project. Alternatively set discrete DB_* vars.
 // cPanel "Remote MySQL" must allow connections from '%' for Vercel.
 const useSSL = process.env.DB_SSL !== 'false' &&
   !['localhost', '127.0.0.1'].includes(process.env.DB_HOST || 'localhost');
 
-const config = {
-  host: process.env.DB_HOST || 'localhost',
-  port: parseInt(process.env.DB_PORT || '3306', 10),
-  database: process.env.DB_NAME || 'hitbyhuma_pos',
-  user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || '',
-  // Keep small: shared hosting max_user_connections is low and each
-  // serverless instance holds its own pool.
-  connectionLimit: parseInt(process.env.DB_POOL_MAX || '5', 10),
-  waitForConnections: true,
-  queueLimit: 0,
-  connectTimeout: 15000,
-  enableKeepAlives: true,
-  charset: 'utf8mb4',
-  dateStrings: true,
-  ...(useSSL ? { ssl: { rejectUnauthorized: false } } : {}),
-};
+let config;
+if (process.env.DATABASE_URL) {
+  config = {
+    uri: process.env.DATABASE_URL,
+    connectionLimit: parseInt(process.env.DB_POOL_MAX || '5', 10),
+    waitForConnections: true,
+    queueLimit: 0,
+    connectTimeout: 15000,
+    enableKeepAlives: true,
+    charset: 'utf8mb4',
+    dateStrings: true,
+  };
+} else {
+  config = {
+    host: process.env.DB_HOST || 'localhost',
+    port: parseInt(process.env.DB_PORT || '3306', 10),
+    database: process.env.DB_NAME || 'hitbyhuma_pos',
+    user: process.env.DB_USER || 'root',
+    password: process.env.DB_PASSWORD || '',
+    // Keep small: shared hosting max_user_connections is low and each
+    // serverless instance holds its own pool.
+    connectionLimit: parseInt(process.env.DB_POOL_MAX || '5', 10),
+    waitForConnections: true,
+    queueLimit: 0,
+    connectTimeout: 15000,
+    enableKeepAlives: true,
+    charset: 'utf8mb4',
+    dateStrings: true,
+    ...(useSSL ? { ssl: { rejectUnauthorized: false } } : {}),
+  };
+}
 
 let pool = null;
 
