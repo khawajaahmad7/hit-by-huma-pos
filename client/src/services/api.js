@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { useAuthStore } from '../stores/authStore';
 
-// Same-origin API (Vercel: SPA + /api serverless functions served from one domain).
+// Same-origin API: SPA + /api serverless functions served from one domain.
 // VITE_API_URL only needed if the API lives on a different host.
 const API_BASE_URL = import.meta.env.VITE_API_URL
   ? `${import.meta.env.VITE_API_URL}/api/v1`

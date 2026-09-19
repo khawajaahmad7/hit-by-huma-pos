@@ -12,7 +12,9 @@
     "dev:server": "nodemon server/src/index.js",
     "dev:client": "cd client && npm run dev",
     "install:all": "npm install",
-    "build": "cd client && npm run build"
+    "build": "cd client && npm run build",
+    "start": "NODE_ENV=production node server/src/index.js",
+    "postinstall": "cd client && npm install && npm run build"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

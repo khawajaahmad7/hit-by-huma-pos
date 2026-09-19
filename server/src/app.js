@@ -1,4 +1,5 @@
 require('dotenv').config();
+const path = require('path');
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -18,23 +19,37 @@ const reportRoutes = require('./routes/reports');
 const settingsRoutes = require('./routes/settings');
 
 const app = express();
+const isProduction = process.env.NODE_ENV === 'production';
 
-// Trust proxy for Vercel
+// Trust proxy
 app.set('trust proxy', 1);
 
 // Security Middleware
-app.use(helmet());
+app.use(helmet({
+  contentSecurityPolicy: isProduction ? {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+      fontSrc: ["'self'", "https://fonts.gstatic.com"],
+      imgSrc: ["'self'", "data:", "https:"],
+    },
+  } : false,
+}));
 
 const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:3000',
-  process.env.CLIENT_URL
+  'http://localhost:5000',
+  process.env.CLIENT_URL,
+  process.env.POS_URL,
 ].filter(Boolean);
 
 app.use(cors({
   origin: function (origin, callback) {
     if (!origin) return callback(null, true);
-    if (allowedOrigins.includes(origin) || origin.includes('.vercel.app') || origin.includes('.hitbyhuma.com')) {
+    if (isProduction) return callback(null, true); // same-origin in production
+    if (allowedOrigins.includes(origin) || origin.includes('.vercel.app') || origin.includes('.hitbyhuma.com') || origin.includes('localhost')) {
       callback(null, true);
     } else {
       callback(new Error(`Origin ${origin} not allowed by CORS`));
@@ -76,7 +91,7 @@ app.use(`${API_PREFIX}/reports`, reportRoutes);
 app.use(`${API_PREFIX}/settings`, settingsRoutes);
 
 // Health Check
-app.get('/health', async (req, res) => {
+app.get('/api/health', async (req, res) => {
   let dbStatus = 'unknown';
   try {
     await db.query('SELECT 1');
@@ -90,6 +105,18 @@ app.get('/health', async (req, res) => {
     database: dbStatus
   });
 });
+
+// Serve static frontend in production
+if (isProduction) {
+  const clientDist = path.join(__dirname, '../../../client/dist');
+  app.use(express.static(clientDist, { maxAge: '1y', index: false }));
+
+  // SPA fallback — serve index.html for any non-API route
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api/')) return next();
+    res.sendFile(path.join(clientDist, 'index.html'));
+  });
+}
 
 // Error Handler (must be last)
 app.use(errorHandler);
